@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Task Manager with Auth</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f4f4f9; }
+        .container { max-width: 500px; background: white; padding: 20px; border-radius: 8px; margin: 0 auto; }
+        input { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button.print-btn { background: #007bff; margin-bottom: 15px; }
+        button.logout { background: #dc3545; margin-top: 15px; }
+        .hidden { display: none; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+
+        /* Print Media Styles */
+        @media print {
+            #authSection,
+            button,
+            input,
+            .logout {
+                display: none !important;
+            }
+
+            body {
+                background: white;
+                color: black;
+                margin: 0;
+                padding: 0;
+            }
+
+            .container {
+                max-width: 100%;
+                box-shadow: none;
+                padding: 0;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            th, td {
+                border: 1px solid #000;
+                padding: 8px;
+                text-align: left;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- Auth Section -->
+    <div id="authSection">
+        <h2 id="authTitle">Register</h2>
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button type="button" onclick="handleAuth()">Submit</button>
+        <p style="text-align: center;">
+            <a href="#" onclick="toggleAuthMode()" id="toggleLink">Have an account? Login</a>
+        </p>
+    </div>
+
+    <!-- App Section -->
+    <div id="appSection" class="hidden">
+        <h2>Welcome, <span id="userDisplay"></span>!</h2>
+        <input type="text" id="taskInput" placeholder="New task...">
+        <button type="button" onclick="addTask()">Add Task</button>
+        
+        <hr style="margin: 20px 0;">
+
+        <!-- Print Button -->
+        <button type="button" class="print-btn" onclick="printTasks()">🖨️ Print Records</button>
+
+        <!-- Data Table -->
+        <table border="1" id="taskTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Task Title</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="taskBody">
+                <!-- Dynamic task rows injected here -->
+            </tbody>
+        </table>
+
+        <button type="button" class="logout" onclick="logout()">Logout</button>
+    </div>
+</div>
+
+<script>
+    const API_BASE = 'http://localhost:5500';
+    let isLogin = false; 
+
+    function toggleAuthMode() {
+        isLogin = !isLogin;
+        document.getElementById('authTitle').textContent = isLogin ? 'Login' : 'Register';
+        document.getElementById('toggleLink').textContent = isLogin ? 'Need an account? Register' : 'Have an account? Login';
+    }
+
+    async function handleAuth() {
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+
+        const username = usernameInput ? usernameInput.value.trim() : '';
+        const password = passwordInput ? passwordInput.value.trim() : '';
+
+        if (!username || !password) {
+            alert('Please fill in both username and password fields.');
+            return;
+        }
+
+        const endpoint = isLogin ? '/api/login' : '/api/register';
+
+        try {
+            const res = await fetch(`${API_BASE}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                alert('Error: ' + (data.error || 'Request failed'));
+                return;
+            }
+
+            if (isLogin) {
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('username', data.username);
+                usernameInput.value = '';
+                passwordInput.value = '';
+                alert('Login successful!');
+                showApp();
+            } else {
+                alert('Registration successful! Switching to login...');
+                usernameInput.value = '';
+                passwordInput.value = '';
+                toggleAuthMode();
+            }
+        } catch (err) {
+            console.error('Network/Server error:', err);
+            alert('Could not connect to backend server. Make sure node server.js is running.');
+        }
+    }
+
+    async function loadTasks() {
+        try {
+            const res = await fetch(`${API_BASE}/api/tasks`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+            });
+
+            if (res.status === 401 || res.status === 403) {
+                logout();
+                return;
+            }
+
+            if (!res.ok) return;
+
+            const tasks = await res.json();
+            const tbody = document.getElementById('taskBody');
+            tbody.innerHTML = '';
+
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No tasks found.</td></tr>';
+                return;
+            }
+
+            tasks.forEach(task => {
+                const row = document.createElement('tr');
+                
+                if (task.completed) {
+                    row.style.backgroundColor = '#e8f8f5';
+                }
+
+                row.innerHTML = `
+                    <td>${task.id}</td>
+                    <td>${task.title}</td>
+                    <td>${task.completed ? '✅ Completed' : '⏳ Pending'}</td>
+                `;
+
+                tbody.appendChild(row);
+            });
+        } catch (err) {
+            console.error('Error loading tasks:', err);
+        }
+    }
+
+    async function addTask() {
+        const input = document.getElementById('taskInput');
+        const title = input.value.trim();
+        if (!title) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/api/tasks`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: JSON.stringify({ title })
+            });
+
+            if (res.ok) {
+                input.value = '';
+                loadTasks();
+            } else {
+                const errData = await res.json();
+                alert(errData.error || 'Failed to add task.');
+            }
+        } catch (err) {
+            console.error('Error adding task:', err);
+        }
+    }
+
+    function printTasks() {
+        window.print();
+    }
+
+    function showApp() {
+        document.getElementById('authSection').classList.add('hidden');
+        document.getElementById('appSection').classList.remove('hidden');
+        document.getElementById('userDisplay').textContent = localStorage.getItem('username') || '';
+        loadTasks();
+    }
+
+    function logout() {
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        document.getElementById('authSection').classList.remove('hidden');
+        document.getElementById('appSection').classList.add('hidden');
+    }
+
+    // Auto-login check on page load
+    if (localStorage.getItem('token')) {
+        showApp();
+    }
+</script>
+</body>
+</html>
